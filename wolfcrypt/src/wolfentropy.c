@@ -513,6 +513,40 @@ static int Entropy_GetNoise(unsigned char* noise, int samples)
     return 0;
 }
 
+/* Get as many full-width samples of noise as required.
+ *
+ * One sample is the complete 64-bit time delta measured for that sample
+ * (see Entropy_GetSample()), NOT truncated to the 8 least-significant bits
+ * as in Entropy_GetNoise(). Intended for SP 800-90B assessment of the raw
+ * measurement.
+ *
+ * @param [out] noise    Buffer to hold samples.
+ * @param [in]  samples  Number of 64-bit samples to get.
+ * @return  0 on success.
+ * @return  Negative on hash failure (e.g. FIPS module not operational).
+ */
+static int Entropy_GetNoise64(word64* noise, int samples)
+{
+    int i;
+    int ret;
+    word64 sample;
+
+    /* Do it once to get things going. */
+    ret = Entropy_MemUse();
+    if (ret != 0)
+        return ret;
+
+    /* Get as many samples as required. */
+    for (i = 0; i < samples; i++) {
+        ret = Entropy_GetSample(&sample);
+        if (ret != 0)
+            return ret;
+        noise[i] = sample;
+    }
+
+    return 0;
+}
+
 /* Mutex to prevent multiple callers requesting entropy operations at the
  * same time.
  */
@@ -559,6 +593,65 @@ int wc_Entropy_GetRawEntropy(unsigned char* raw, int cnt)
 #endif
     if (ret == 0) {
         ret = Entropy_GetNoise(raw, cnt);
+    }
+#ifdef ENTROPY_MEMUSE_THREADED
+    /* Stop the counter thread to avoid thrashing the system. */
+    Entropy_StopThread();
+#endif
+
+    if (locked) {
+        wc_UnLockMutex(&entropy_mutex);
+    }
+
+    return ret;
+}
+
+/* Generate full-width raw entropy samples for performing assessment.
+ *
+ * Same collection path as wc_Entropy_GetRawEntropy(), but each sample is
+ * the complete 64-bit time delta (sample = now - entropy_last_time) rather
+ * than its 8 least-significant bits. Samples are stored in native byte
+ * order (little-endian on all supported targets).
+ *
+ * @param [out] raw  Buffer to hold raw 64-bit entropy samples.
+ * @param [in]  cnt  Number of 64-bit samples to get.
+ * @return  0 on success.
+ * @return  Negative when creating a thread fails - when no high resolution
+ * clock available.
+ */
+int wc_Entropy_GetRawEntropy64(word64* raw, int cnt)
+{
+    int ret = 0;
+    int locked = 0;
+
+    if (raw == NULL || cnt <= 0) {
+        return BAD_FUNC_ARG;
+    }
+
+#ifdef HAVE_FIPS
+    if (!entropy_memuse_initialized) {
+        ret = Entropy_Init();
+    }
+#endif
+
+    /* Lock the mutex as collection uses globals. */
+    if (ret == 0) {
+        if (wc_LockMutex(&entropy_mutex) != 0) {
+            ret = BAD_MUTEX_E;
+        }
+        else {
+            locked = 1;
+        }
+    }
+
+#ifdef ENTROPY_MEMUSE_THREADED
+    if (ret == 0) {
+        /* Start the counter thread as a proxy for time counter. */
+        ret = Entropy_StartThread();
+    }
+#endif
+    if (ret == 0) {
+        ret = Entropy_GetNoise64(raw, cnt);
     }
 #ifdef ENTROPY_MEMUSE_THREADED
     /* Stop the counter thread to avoid thrashing the system. */
