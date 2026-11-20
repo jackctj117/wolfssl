@@ -31,6 +31,7 @@ int test_wc_RsaPublicKeyDecode(void);
 int test_wc_RsaPublicKeyDecodeRaw(void);
 int test_wc_RsaPrivateKeyDecodeRaw(void);
 int test_wc_MakeRsaKey(void);
+int test_wc_MakeRsaKey_DLessThanLcm(void);
 int test_wc_CheckProbablePrime(void);
 int test_wc_RsaPSS_Verify(void);
 int test_wc_RsaPSS_BadTerminator(void);
@@ -53,6 +54,7 @@ int test_wc_RsaFeatureCoverage(void);
 int test_wc_CryptoCb_RsaPssVerify(void);
 int test_wc_CryptoCb_RsaPssVerifyRecover(void);
 int test_wc_MakeRsaKey_id_dev(void);
+int test_wc_MakeRsaKey_dev_size(void);
 int test_wc_FreeRsaKey_CryptoCb(void);
 
 #define TEST_RSA_DECLS                                          \
@@ -63,6 +65,7 @@ int test_wc_FreeRsaKey_CryptoCb(void);
     TEST_DECL_GROUP("rsa", test_wc_RsaPublicKeyDecodeRaw),      \
     TEST_DECL_GROUP("rsa", test_wc_RsaPrivateKeyDecodeRaw),     \
     TEST_DECL_GROUP("rsa", test_wc_MakeRsaKey),                 \
+    TEST_DECL_GROUP("rsa", test_wc_MakeRsaKey_DLessThanLcm),    \
     TEST_DECL_GROUP("rsa", test_wc_CheckProbablePrime),         \
     TEST_DECL_GROUP("rsa", test_wc_RsaPSS_Verify),              \
     TEST_DECL_GROUP("rsa", test_wc_RsaPSS_BadTerminator),       \
@@ -85,6 +88,7 @@ int test_wc_FreeRsaKey_CryptoCb(void);
     TEST_DECL_GROUP("rsa", test_wc_CryptoCb_RsaPssVerify),         \
     TEST_DECL_GROUP("rsa", test_wc_CryptoCb_RsaPssVerifyRecover),  \
     TEST_DECL_GROUP("rsa", test_wc_MakeRsaKey_id_dev),          \
+    TEST_DECL_GROUP("rsa", test_wc_MakeRsaKey_dev_size),        \
     TEST_DECL_GROUP("rsa", test_wc_FreeRsaKey_CryptoCb)
 
 #endif /* WOLFCRYPT_TEST_RSA_H */

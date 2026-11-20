@@ -5449,6 +5449,17 @@ static const byte lower_bound[] = {
 #endif /* !WOLFSSL_NO_RSA_SW */
 
 
+/* Software key generation makes two primes of size/16 bytes each, and the
+ * prime lower bound is read as size/16 bytes.  Any other size would silently
+ * produce a smaller modulus than requested. */
+#define RSA_SW_KEYGEN_SIZE_OK(size)    (((size) % 16) == 0)
+
+#ifdef WC_RSA_BLINDING
+/* Digits in each random multiplier that blinds the gcd(p-1, q-1) operands
+ * during key generation: at least 64 bits. */
+#define RSA_KEYGEN_GCD_BLIND_DIGITS    ((64 + DIGIT_BIT - 1) / DIGIT_BIT)
+#endif
+
 /* returns 1 on key size ok and 0 if not ok */
 static WC_INLINE int RsaSizeCheck(int size)
 {
@@ -5501,7 +5512,7 @@ static int _CheckProbablePrime(mp_int* p, mp_int* q, mp_int* e, int nlen,
     if (p == NULL || e == NULL || isPrime == NULL)
         return BAD_FUNC_ARG;
 
-    if (!RsaSizeCheck(nlen))
+    if (!RsaSizeCheck(nlen) || !RSA_SW_KEYGEN_SIZE_OK(nlen))
         return BAD_FUNC_ARG;
 
     *isPrime = MP_NO;
@@ -5875,6 +5886,13 @@ int wc_MakeRsaKey(RsaKey* key, int size, long e, WC_RNG* rng)
     }
 #endif
 
+    /* Checked here, not in RsaSizeCheck(), so that devices and callbacks
+     * above may still generate other sizes. */
+    if (!RSA_SW_KEYGEN_SIZE_OK(size)) {
+        err = BAD_FUNC_ARG;
+        goto out;
+    }
+
     err = mp_init_multi(p, q, tmp1, tmp2, tmp3, NULL);
 
     if (err == MP_OKAY)
@@ -6050,11 +6068,47 @@ int wc_MakeRsaKey(RsaKey* key, int size, long e, WC_RNG* rng)
         err = mp_sub_d(p, 1, tmp1);
     if (err == MP_OKAY)                /* tmp2 = q-1 */
         err = mp_sub_d(q, 1, tmp2);
+    /* FIPS 186-5 A.1.1 step 3 and SP 800-56B Rev. 2 sec 6.4.1 require
+     * d = e^-1 mod lcm(p-1, q-1), so d < lcm(p-1, q-1).  Inverting modulo
+     * (p-1)(q-1) gives a working d that is too large about half the time. */
 #ifdef WC_RSA_BLINDING
-    if (err == MP_OKAY)                /* tmp3 = order of n */
-        err = mp_mul(tmp1, tmp2, tmp3);
+    /* lcm(p-1, q-1) = ((p-1) / g) * (q-1) with g = gcd(p-1, q-1).  mp_gcd()
+     * is not constant time, so it never sees p-1 and q-1 themselves: the
+     * large gcd is of r1*(p-1) and r2*(q-1) for random r1 and r2, giving
+     * G = g*c for a small c.  c is then removed with gcds of small values:
+     *   g' = gcd(G, (p-1) mod G) = gcd(p-1, G)
+     *   g  = gcd(g', (q-1) mod g')
+     * which is exactly g, as (p-1)/g and (q-1)/g are coprime.  The key's
+     * dP, dQ, u, n and d are scratch here and are wiped afterwards. */
+    if (err == MP_OKAY)                /* key->dP = r1 */
+        err = mp_rand(&key->dP, RSA_KEYGEN_GCD_BLIND_DIGITS, rng);
+    if (err == MP_OKAY)                /* key->dQ = r2 */
+        err = mp_rand(&key->dQ, RSA_KEYGEN_GCD_BLIND_DIGITS, rng);
+    if (err == MP_OKAY)                /* key->u = r1*(p-1) */
+        err = mp_mul(tmp1, &key->dP, &key->u);
+    if (err == MP_OKAY)                /* key->n = r2*(q-1) */
+        err = mp_mul(tmp2, &key->dQ, &key->n);
+    if (err == MP_OKAY)                /* tmp3 = G */
+        err = mp_gcd(&key->u, &key->n, tmp3);
+    if (err == MP_OKAY)                /* key->d = (p-1) mod G */
+        err = mp_mod(tmp1, tmp3, &key->d);
+    if (err == MP_OKAY)                /* key->u = g' */
+        err = mp_gcd(tmp3, &key->d, &key->u);
+    if (err == MP_OKAY)                /* key->d = (q-1) mod g' */
+        err = mp_mod(tmp2, &key->u, &key->d);
+    if (err == MP_OKAY)                /* tmp3 = g */
+        err = mp_gcd(&key->u, &key->d, tmp3);
+    mp_forcezero(&key->dP);
+    mp_forcezero(&key->dQ);
+    mp_forcezero(&key->u);
+    mp_forcezero(&key->n);
+    if (err == MP_OKAY)                /* key->d = (p-1) / g */
+        err = mp_div(tmp1, tmp3, &key->d, NULL);
+    if (err == MP_OKAY)                /* tmp3 = lcm(p-1, q-1) */
+        err = mp_mul(&key->d, tmp2, tmp3);
+    mp_forcezero(&key->d);
 #else
-    if (err == MP_OKAY)                /* tmp3 = lcm(p-1, q-1), last loop */
+    if (err == MP_OKAY)                /* tmp3 = lcm(p-1, q-1) */
         err = mp_lcm(tmp1, tmp2, tmp3);
 #endif
     /* make key */
@@ -6078,7 +6132,7 @@ int wc_MakeRsaKey(RsaKey* key, int size, long e, WC_RNG* rng)
     if (err == MP_OKAY)
         err = mp_mul(&key->p, &key->e, &key->e);
 #endif
-    if (err == MP_OKAY)                /* key->d = 1/e mod tmp3 */
+    if (err == MP_OKAY)                /* key->d = 1/e mod lcm(p-1, q-1) */
         err = mp_invmod(&key->e, tmp3, &key->d);
 #ifdef WC_RSA_BLINDING
     /* Take off blinding from d and reset e */

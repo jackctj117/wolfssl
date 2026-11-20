@@ -1529,8 +1529,10 @@ int wc_RsaKeyToPublicDer_ex(RsaKey* key, byte* output, word32 outLen,
 
     \param key pointer to the RsaKey structure in which to store the
     generated private key
-    \param size desired key length, in bits. Required to be greater than
-    RSA_MIN_SIZE and less than RSA_MAX_SIZE
+    \param size desired key length, in bits. Required to be between
+    RSA_MIN_SIZE and RSA_MAX_SIZE. Software key generation also requires a
+    multiple of 16 and returns BAD_FUNC_ARG for other sizes; a device or
+    crypto callback that generates the key may accept other sizes
     \param e exponent parameter to use for generating the key. A secure
     choice is 65537
     \param rng pointer to an RNG structure to use for random number generation
@@ -2053,7 +2055,8 @@ int wc_RsaExportKey(const RsaKey* key, byte* e, word32* eSz,
     \param qSz Prime q size
     \param e Public exponent buffer
     \param eSz Public exponent size
-    \param nlen Modulus length
+    \param nlen Modulus length in bits. Must be between RSA_MIN_SIZE and
+    RSA_MAX_SIZE and a multiple of 16; otherwise PRIME_GEN_E is returned
     \param isPrime Prime result pointer
     \param rng Random number generator
 
@@ -2085,7 +2088,8 @@ int wc_CheckProbablePrime_ex(const byte* p, word32 pSz,
     \param qSz Prime q size
     \param e Public exponent buffer
     \param eSz Public exponent size
-    \param nlen Modulus length
+    \param nlen Modulus length in bits. Must be between RSA_MIN_SIZE and
+    RSA_MAX_SIZE and a multiple of 16; otherwise PRIME_GEN_E is returned
     \param isPrime Prime result pointer
 
     _Example_

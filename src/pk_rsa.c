@@ -2515,9 +2515,9 @@ static int wolfssl_rsa_generate_key_native(WOLFSSL_RSA* rsa, int bits,
 
 /* Generate an RSA key that has the specified modulus size and public exponent.
  *
- * Note: Because of wc_MakeRsaKey an RSA key size generated can be rounded
- *       down to nearest multiple of 8. For example generating a key of size
- *       2999 bits will make a key of size 374 bytes instead of 375 bytes.
+ * Note: software key generation in wc_MakeRsaKey only makes moduli whose
+ *       size is a multiple of 16 bits; any other size, e.g. 2999, fails
+ *       rather than being rounded down.
  *
  * @param [in]      bits  Number of bits that the modulus must have i.e. 2048.
  * @param [in]      e     Public exponent to use i.e. 65537.
@@ -2592,9 +2592,9 @@ WOLFSSL_RSA* wolfSSL_RSA_generate_key(int bits, unsigned long e,
 
 /* Generate an RSA key that has the specified modulus size and public exponent.
  *
- * Note: Because of wc_MakeRsaKey an RSA key size generated can be rounded
- *       down to nearest multiple of 8. For example generating a key of size
- *       2999 bits will make a key of size 374 bytes instead of 375 bytes.
+ * Note: software key generation in wc_MakeRsaKey only makes moduli whose
+ *       size is a multiple of 16 bits; any other size, e.g. 2999, fails
+ *       rather than being rounded down.
  *
  * @param [in]      bits  Number of bits that the modulus must have i.e. 2048.
  * @param [in]      e     Public exponent to use, i.e. 65537, as a BN.

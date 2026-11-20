@@ -420,11 +420,105 @@ int test_wc_MakeRsaKey(void)
     /* e & 1 == 0 */
     ExpectIntEQ(MAKE_RSA_KEY(&genKey, bits, 6, &rng),
         WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+#ifndef HAVE_SELFTEST
+    /* Sizes that are not a multiple of 16 used to be rounded down silently
+     * to a smaller modulus; they must be rejected. */
+    ExpectIntEQ(MAKE_RSA_KEY(&genKey, bits + 1, WC_RSA_EXPONENT, &rng),
+        WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    ExpectIntEQ(MAKE_RSA_KEY(&genKey, bits + 8, WC_RSA_EXPONENT, &rng),
+        WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    ExpectIntEQ(MAKE_RSA_KEY(&genKey, bits + 15, WC_RSA_EXPONENT, &rng),
+        WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+#endif
 
     DoExpectIntEQ(wc_FreeRng(&rng), 0);
 #endif
     return EXPECT_RESULT();
 } /* END test_wc_MakeRsaKey */
+
+/*
+ * wc_MakeRsaKey() must produce d = e^-1 mod lcm(p-1, q-1), as FIPS 186-5
+ * A.1.1 and SP 800-56B Rev. 2 sec 6.4.1 require, so d < lcm(p-1, q-1).
+ * Inverting modulo (p-1)(q-1) instead gives a d that is too large for about
+ * half of keys, so several keys are checked.
+ *
+ * The bound is checked as d * g < (p-1)(q-1) with g = gcd(p-1, q-1).  g is
+ * found here with a plain Euclid loop on mp_mod(), not with mp_gcd(), which
+ * key generation uses, and is checked to divide both p-1 and q-1.
+ */
+int test_wc_MakeRsaKey_DLessThanLcm(void)
+{
+    EXPECT_DECLS;
+#if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN) && \
+    defined(WOLFSSL_PUBLIC_MP) && !defined(HAVE_FIPS) && \
+    !defined(HAVE_SELFTEST) && !defined(WOLFSSL_NO_RSA_SW) && \
+    !defined(WOLF_CRYPTO_CB_ONLY_RSA)
+    RsaKey key;
+    WC_RNG rng;
+    mp_int pm1, qm1, g, t, b;
+    int i;
+#if (!defined(WOLFSSL_SP_MATH) || defined(WOLFSSL_SP_MATH_ALL)) && \
+    (defined(RSA_MIN_SIZE) && (RSA_MIN_SIZE <= 1024))
+    int bits = 1024;
+#else
+    int bits = 2048;
+#endif
+
+    XMEMSET(&key, 0, sizeof(RsaKey));
+    XMEMSET(&rng, 0, sizeof(WC_RNG));
+
+    ExpectIntEQ(mp_init_multi(&pm1, &qm1, &g, &t, &b, NULL), MP_OKAY);
+    ExpectIntEQ(wc_InitRng(&rng), 0);
+
+    for (i = 0; i < 8 && EXPECT_SUCCESS(); i++) {
+        ExpectIntEQ(wc_InitRsaKey(&key, HEAP_HINT), 0);
+        ExpectIntEQ(wc_MakeRsaKey(&key, bits, WC_RSA_EXPONENT, &rng), 0);
+        ExpectIntEQ(mp_count_bits(&key.n), bits);
+
+        ExpectIntEQ(mp_sub_d(&key.p, 1, &pm1), MP_OKAY);
+        ExpectIntEQ(mp_sub_d(&key.q, 1, &qm1), MP_OKAY);
+
+        /* e * d == 1 mod (p-1) and mod (q-1), so e * d == 1 mod lcm. */
+        ExpectIntEQ(mp_mulmod(&key.e, &key.d, &pm1, &t), MP_OKAY);
+        ExpectIntEQ(mp_cmp_d(&t, 1), MP_EQ);
+        ExpectIntEQ(mp_mulmod(&key.e, &key.d, &qm1, &t), MP_OKAY);
+        ExpectIntEQ(mp_cmp_d(&t, 1), MP_EQ);
+
+        /* g = gcd(p-1, q-1) by Euclid: while b != 0: (g, b) = (b, g mod b) */
+        ExpectIntEQ(mp_copy(&pm1, &g), MP_OKAY);
+        ExpectIntEQ(mp_copy(&qm1, &b), MP_OKAY);
+        while (EXPECT_SUCCESS() && !mp_iszero(&b)) {
+            ExpectIntEQ(mp_mod(&g, &b, &t), MP_OKAY);
+            ExpectIntEQ(mp_copy(&b, &g), MP_OKAY);
+            ExpectIntEQ(mp_copy(&t, &b), MP_OKAY);
+        }
+        /* p and q are odd primes, so g is even and divides both. */
+        ExpectIntGE(mp_count_bits(&g), 2);
+        ExpectIntEQ(mp_mod(&pm1, &g, &t), MP_OKAY);
+        ExpectTrue(mp_iszero(&t));
+        ExpectIntEQ(mp_mod(&qm1, &g, &t), MP_OKAY);
+        ExpectTrue(mp_iszero(&t));
+
+        /* d * g < (p-1)(q-1)  <=>  d < lcm(p-1, q-1) */
+        ExpectIntEQ(mp_mul(&key.d, &g, &g), MP_OKAY);
+        ExpectIntEQ(mp_mul(&pm1, &qm1, &t), MP_OKAY);
+        ExpectIntEQ(mp_cmp(&g, &t), MP_LT);
+
+        /* FIPS 186-5 A.1.1 step 3: d > 2^(nlen/2). */
+        ExpectIntGT(mp_count_bits(&key.d), bits / 2);
+
+        DoExpectIntEQ(wc_FreeRsaKey(&key), 0);
+    }
+
+    mp_forcezero(&pm1);
+    mp_forcezero(&qm1);
+    mp_forcezero(&g);
+    mp_forcezero(&t);
+    mp_forcezero(&b);
+    DoExpectIntEQ(wc_FreeRng(&rng), 0);
+#endif
+    return EXPECT_RESULT();
+} /* END test_wc_MakeRsaKey_DLessThanLcm */
 
 /*
  * Testing wc_CheckProbablePrime()
@@ -480,6 +574,10 @@ int test_wc_CheckProbablePrime(void)
         WC_NO_ERR_TRACE(BAD_FUNC_ARG));
     ExpectIntEQ(wc_CheckProbablePrime(NULL, 0, NULL, 0, NULL, 0, nlen, isPrime),
         WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    /* nlen not a multiple of 16: the prime bounds are byte granular.  The
+     * size check fails inside, which this API reports as PRIME_GEN_E. */
+    ExpectIntEQ(wc_CheckProbablePrime(p, pSz, q, qSz, e, eSz, nlen + 8,
+        isPrime), WC_NO_ERR_TRACE(PRIME_GEN_E));
 
     /* Good case */
     ExpectIntEQ(wc_CheckProbablePrime(p, pSz, q, qSz, e, eSz, nlen, isPrime),
@@ -2820,6 +2918,58 @@ int test_wc_MakeRsaKey_id_dev(void)
     ret = wc_AsyncWait(ret, &key.asyncDev, WC_ASYNC_FLAG_NONE);
 #endif
     ExpectIntEQ(ret, 0);
+    DoExpectIntEQ(wc_FreeRsaKey(&key), 0);
+
+    wc_CryptoCb_UnRegisterDevice(devId);
+    DoExpectIntEQ(wc_FreeRng(&rng), 0);
+#endif
+    return EXPECT_RESULT();
+}
+
+#if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN) && defined(WOLF_CRYPTO_CB) && \
+    !defined(WC_NO_RNG) && !defined(WOLFSSL_MICROCHIP_TA100) && \
+    (!defined(WOLFSSL_SE050) || defined(WOLFSSL_SE050_NO_RSA) || \
+     defined(WOLFSSL_SE050_ONLY_KEY_ID)) && \
+    !defined(HAVE_FIPS) && !defined(HAVE_SELFTEST)
+/* Record the size of an RSA key generation request and claim it is done. */
+static int rsa_keygen_size_cb(int devIdArg, wc_CryptoInfo* info, void* ctx)
+{
+    (void)devIdArg;
+    if (info->algo_type == WC_ALGO_TYPE_PK &&
+            info->pk.type == WC_PK_TYPE_RSA_KEYGEN) {
+        *(int*)ctx = info->pk.rsakg.size;
+        return 0;
+    }
+    return WC_NO_ERR_TRACE(CRYPTOCB_UNAVAILABLE);
+}
+#endif
+
+/*
+ * The multiple-of-16 size rule is a limit of software key generation only:
+ * a crypto callback must still be offered other sizes.
+ */
+int test_wc_MakeRsaKey_dev_size(void)
+{
+    EXPECT_DECLS;
+#if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN) && defined(WOLF_CRYPTO_CB) && \
+    !defined(WC_NO_RNG) && !defined(WOLFSSL_MICROCHIP_TA100) && \
+    (!defined(WOLFSSL_SE050) || defined(WOLFSSL_SE050_NO_RSA) || \
+     defined(WOLFSSL_SE050_ONLY_KEY_ID)) && \
+    !defined(HAVE_FIPS) && !defined(HAVE_SELFTEST)
+    int devId = 2403;
+    int seenSize = 0;
+    RsaKey key;
+    WC_RNG rng;
+
+    XMEMSET(&key, 0, sizeof(key));
+    XMEMSET(&rng, 0, sizeof(rng));
+    ExpectIntEQ(wc_InitRng(&rng), 0);
+    ExpectIntEQ(wc_CryptoCb_RegisterDevice(devId, rsa_keygen_size_cb,
+        &seenSize), 0);
+
+    ExpectIntEQ(wc_InitRsaKey_ex(&key, NULL, devId), 0);
+    ExpectIntEQ(wc_MakeRsaKey(&key, 2056, WC_RSA_EXPONENT, &rng), 0);
+    ExpectIntEQ(seenSize, 2056);
     DoExpectIntEQ(wc_FreeRsaKey(&key), 0);
 
     wc_CryptoCb_UnRegisterDevice(devId);

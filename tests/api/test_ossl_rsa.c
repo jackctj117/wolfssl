@@ -321,12 +321,11 @@ int test_wolfSSL_RSA(void)
     rsa = NULL;
 #endif
 
-    /* remove for now with odd key size until adjusting rsa key size check with
-       wc_MakeRsaKey()
-    ExpectNotNull(rsa = RSA_generate_key(2999, 65537, NULL, NULL));
-    RSA_free(rsa);
-    rsa = NULL;
-    */
+#ifndef HAVE_SELFTEST
+    /* wc_MakeRsaKey() rejects sizes that are not a multiple of 16 instead of
+     * rounding them down to a smaller modulus. */
+    ExpectNull(RSA_generate_key(2999, WC_RSA_EXPONENT, NULL, NULL));
+#endif
 
     ExpectNull(RSA_generate_key(-1, 3, NULL, NULL));
     ExpectNull(RSA_generate_key(RSA_MIN_SIZE - 1, 3, NULL, NULL));
