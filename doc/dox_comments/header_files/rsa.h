@@ -1531,8 +1531,10 @@ int wc_RsaKeyToPublicDer_ex(RsaKey* key, byte* output, word32 outLen,
     generated private key
     \param size desired key length, in bits. Required to be between
     RSA_MIN_SIZE and RSA_MAX_SIZE. Software key generation also requires a
-    multiple of 16 and returns BAD_FUNC_ARG for other sizes; a device or
-    crypto callback that generates the key may accept other sizes
+    multiple of 16 and returns BAD_FUNC_ARG for other sizes. A device or
+    crypto callback that does its own prime generation may accept other
+    sizes; the devcrypto and CAAM back ends use wolfCrypt's prime checks and
+    also require a multiple of 16
     \param e exponent parameter to use for generating the key. A secure
     choice is 65537
     \param rng pointer to an RNG structure to use for random number generation

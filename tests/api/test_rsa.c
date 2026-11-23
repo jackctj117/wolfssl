@@ -420,7 +420,9 @@ int test_wc_MakeRsaKey(void)
     /* e & 1 == 0 */
     ExpectIntEQ(MAKE_RSA_KEY(&genKey, bits, 6, &rng),
         WC_NO_ERR_TRACE(BAD_FUNC_ARG));
-#ifndef HAVE_SELFTEST
+#if !defined(HAVE_SELFTEST) && !defined(WOLFSSL_MICROCHIP_TA100) && \
+    (!defined(WOLFSSL_SE050) || defined(WOLFSSL_SE050_NO_RSA) || \
+     defined(WOLFSSL_SE050_ONLY_KEY_ID))
     /* Sizes that are not a multiple of 16 used to be rounded down silently
      * to a smaller modulus; they must be rejected. */
     ExpectIntEQ(MAKE_RSA_KEY(&genKey, bits + 1, WC_RSA_EXPONENT, &rng),
@@ -452,11 +454,19 @@ int test_wc_MakeRsaKey_DLessThanLcm(void)
 #if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN) && \
     defined(WOLFSSL_PUBLIC_MP) && !defined(HAVE_FIPS) && \
     !defined(HAVE_SELFTEST) && !defined(WOLFSSL_NO_RSA_SW) && \
-    !defined(WOLF_CRYPTO_CB_ONLY_RSA)
+    !defined(WOLF_CRYPTO_CB_ONLY_RSA) && !defined(WOLFSSL_MICROCHIP_TA100) && \
+    (!defined(WOLFSSL_SE050) || defined(WOLFSSL_SE050_NO_RSA) || \
+     defined(WOLFSSL_SE050_ONLY_KEY_ID))
     RsaKey key;
     WC_RNG rng;
     mp_int pm1, qm1, g, t, b;
     int i;
+#if !defined(WOLFSSL_RSA_PUBLIC_ONLY) && !defined(WOLFSSL_RSA_VERIFY_ONLY)
+    const byte msg[] = "d mod lcm round trip";
+    byte enc[512];
+    byte dec[512];
+    int encSz = 0;
+#endif
 #if (!defined(WOLFSSL_SP_MATH) || defined(WOLFSSL_SP_MATH_ALL)) && \
     (defined(RSA_MIN_SIZE) && (RSA_MIN_SIZE <= 1024))
     int bits = 1024;
@@ -470,7 +480,10 @@ int test_wc_MakeRsaKey_DLessThanLcm(void)
     ExpectIntEQ(mp_init_multi(&pm1, &qm1, &g, &t, &b, NULL), MP_OKAY);
     ExpectIntEQ(wc_InitRng(&rng), 0);
 
-    for (i = 0; i < 8 && EXPECT_SUCCESS(); i++) {
+    /* With d taken modulo (p-1)(q-1), each key has d >= lcm with
+     * probability at least 1/2, so 6 keys miss a regression less than 2% of
+     * the time. */
+    for (i = 0; i < 6 && EXPECT_SUCCESS(); i++) {
         ExpectIntEQ(wc_InitRsaKey(&key, HEAP_HINT), 0);
         ExpectIntEQ(wc_MakeRsaKey(&key, bits, WC_RSA_EXPONENT, &rng), 0);
         ExpectIntEQ(mp_count_bits(&key.n), bits);
@@ -506,6 +519,21 @@ int test_wc_MakeRsaKey_DLessThanLcm(void)
 
         /* FIPS 186-5 A.1.1 step 3: d > 2^(nlen/2). */
         ExpectIntGT(mp_count_bits(&key.d), bits / 2);
+
+    #if !defined(WOLFSSL_RSA_PUBLIC_ONLY) && \
+        !defined(WOLFSSL_RSA_VERIFY_ONLY)
+        /* The key must work for decryption, including the optional
+         * WOLFSSL_RSA_CHECK_D_ON_DECRYPT check of d. */
+        ExpectIntEQ(wc_RsaSetRNG(&key, &rng), 0);
+        if (EXPECT_SUCCESS()) {
+            encSz = wc_RsaPublicEncrypt(msg, (word32)sizeof(msg), enc,
+                (word32)sizeof(enc), &key, &rng);
+        }
+        ExpectIntGT(encSz, 0);
+        ExpectIntEQ(wc_RsaPrivateDecrypt(enc, (word32)encSz, dec,
+            (word32)sizeof(dec), &key), (int)sizeof(msg));
+        ExpectBufEQ(dec, msg, sizeof(msg));
+    #endif
 
         DoExpectIntEQ(wc_FreeRsaKey(&key), 0);
     }
@@ -2930,7 +2958,8 @@ int test_wc_MakeRsaKey_id_dev(void)
     !defined(WC_NO_RNG) && !defined(WOLFSSL_MICROCHIP_TA100) && \
     (!defined(WOLFSSL_SE050) || defined(WOLFSSL_SE050_NO_RSA) || \
      defined(WOLFSSL_SE050_ONLY_KEY_ID)) && \
-    !defined(HAVE_FIPS) && !defined(HAVE_SELFTEST)
+    !defined(HAVE_FIPS) && !defined(HAVE_SELFTEST) && \
+    (RSA_MIN_SIZE <= 2056) && (RSA_MAX_SIZE >= 2056)
 /* Record the size of an RSA key generation request and claim it is done. */
 static int rsa_keygen_size_cb(int devIdArg, wc_CryptoInfo* info, void* ctx)
 {
@@ -2955,7 +2984,8 @@ int test_wc_MakeRsaKey_dev_size(void)
     !defined(WC_NO_RNG) && !defined(WOLFSSL_MICROCHIP_TA100) && \
     (!defined(WOLFSSL_SE050) || defined(WOLFSSL_SE050_NO_RSA) || \
      defined(WOLFSSL_SE050_ONLY_KEY_ID)) && \
-    !defined(HAVE_FIPS) && !defined(HAVE_SELFTEST)
+    !defined(HAVE_FIPS) && !defined(HAVE_SELFTEST) && \
+    (RSA_MIN_SIZE <= 2056) && (RSA_MAX_SIZE >= 2056)
     int devId = 2403;
     int seenSize = 0;
     RsaKey key;

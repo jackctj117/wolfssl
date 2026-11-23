@@ -3324,12 +3324,18 @@ static int RsaFunctionSync(const byte* in, word32 inLen, byte* out,
         }
     }
 #ifdef WOLFSSL_RSA_CHECK_D_ON_DECRYPT
+    /* d need only be an inverse of e modulo lcm(p-1, q-1) (RFC 8017,
+     * FIPS 186-5), so check e * d == 1 modulo p-1 and modulo q-1 rather
+     * than modulo (p-1)(q-1). */
     if ((ret == 0) && (type == RSA_PRIVATE_DECRYPT)) {
-        mp_sub(&key->n, &key->p, tmp);
-        mp_sub(tmp, &key->q, tmp);
-        mp_add_d(tmp, 1, tmp);
-        mp_mulmod(&key->d, &key->e, tmp, tmp);
-        if (!mp_isone(tmp)) {
+        if ((mp_sub_d(&key->p, 1, tmp) != MP_OKAY) ||
+                (mp_mulmod(&key->d, &key->e, tmp, tmp) != MP_OKAY) ||
+                !mp_isone(tmp)) {
+            ret = MP_EXPTMOD_E;
+        }
+        else if ((mp_sub_d(&key->q, 1, tmp) != MP_OKAY) ||
+                (mp_mulmod(&key->d, &key->e, tmp, tmp) != MP_OKAY) ||
+                !mp_isone(tmp)) {
             ret = MP_EXPTMOD_E;
         }
     }
@@ -5886,8 +5892,9 @@ int wc_MakeRsaKey(RsaKey* key, int size, long e, WC_RNG* rng)
     }
 #endif
 
-    /* Checked here, not in RsaSizeCheck(), so that devices and callbacks
-     * above may still generate other sizes. */
+    /* Checked here, not in RsaSizeCheck(), so that a device or callback
+     * above that does its own prime generation may still accept other
+     * sizes. */
     if (!RSA_SW_KEYGEN_SIZE_OK(size)) {
         err = BAD_FUNC_ARG;
         goto out;

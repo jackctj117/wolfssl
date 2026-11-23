@@ -125,6 +125,20 @@
   because callers fold the result into constant-time masks that read a
   negative value as a match.
 
+* **Behavioral change (RSA key generation rejects sizes that are not a
+  multiple of 16 and takes d modulo lcm(p-1, q-1))**: software RSA key
+  generation (`wc_MakeRsaKey()` and the OpenSSL-compat and EVP wrappers that
+  call it) now returns `BAD_FUNC_ARG` (NULL or 0 from the compat layer) for a
+  size that is not a multiple of 16, instead of silently producing a smaller
+  modulus (e.g. 2992 bits for 2999).  `wc_CheckProbablePrime()` and
+  `wc_CheckProbablePrime_ex()` return `PRIME_GEN_E` for such an `nlen`.
+  Devices and crypto callbacks that do their own prime generation may still
+  accept other sizes.  Builds with `WC_RSA_BLINDING` (the default) now
+  compute d = e^-1 mod lcm(p-1, q-1), as FIPS 186-5 A.1.1 requires, instead
+  of modulo (p-1)(q-1); generated keys stay valid but their d differs.
+  `WOLFSSL_RSA_CHECK_D_ON_DECRYPT` now checks d modulo p-1 and q-1, so it
+  accepts any valid private exponent.
+
 ## Post-Quantum Cryptography (PQC)
 
 * Added opt-in per-key Falcon signing caches (`--enable-falcon=cache-key`, `cache-basis`), roughly doubling signing speed with the default integer fpr backend. by @Frauschi

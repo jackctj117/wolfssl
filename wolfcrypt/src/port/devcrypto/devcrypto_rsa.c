@@ -438,6 +438,12 @@ int wc_DevCrypto_MakeRsaKey(RsaKey* key, int size, long e, WC_RNG* rng)
     byte eBuf[8];
     int  eBufSz;
 
+    /* The primes are checked with wc_CheckProbablePrime_ex(), which only
+     * accepts moduli whose size is a multiple of 16 bits. */
+    if ((size % 16) != 0) {
+        return BAD_FUNC_ARG;
+    }
+
     nSz = dSz = bSz;
     cSz = pSz = qSz = dpSz = dqSz = bSz/2;
 
